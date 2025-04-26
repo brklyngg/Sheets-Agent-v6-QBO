@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <?!= include('Styles'); ?>
+  </head>
+  <body class="bg-gray-100 flex flex-col h-screen">
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <!-- Header -->
+      <div class="bg-white shadow-sm border-b px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+          <img src="https://www.gstatic.com/images/icons/material/system/1x/enhanced_encryption_black_48dp.png" alt="QBO Agent Logo" class="w-6 h-6">
+          <h1 class="font-semibold text-gray-800">QBO Agent</h1>
+        </div>
+        <button id="settingsBtn" class="text-gray-600 hover:text-gray-800">
+          <i class="fas fa-cog"></i>
+        </button>
+      </div>
+      
+      <!-- Connection Status Bar -->
+      <div id="connectionStatus" class="px-4 py-2 text-xs bg-gray-100 border-b flex items-center justify-between">
+        <div class="flex items-center">
+          <span class="mr-2">QuickBooks:</span>
+          <span id="qboStatus" class="text-red-500">
+            <i class="fas fa-times-circle"></i> Not Connected
+          </span>
+        </div>
+        <div class="flex items-center">
+          <span class="mr-2">NLP:</span>
+          <span id="openaiStatus" class="text-red-500">
+            <i class="fas fa-times-circle"></i> Not Configured
+          </span>
+        </div>
+      </div>
+      
+      <!-- Chat Container -->
+      <div id="chatContainer" class="flex-1 overflow-y-auto px-4 py-2 space-y-4">
+        <!-- Welcome Message -->
+        <div class="flex justify-end mb-4">
+          <div class="bg-white rounded-lg shadow-sm p-3 max-w-xs">
+            <div class="text-sm">
+              Welcome to QBO Agent! I can help you get QuickBooks data into your spreadsheet. Try asking me to fetch reports or data.
+            </div>
+            <div class="text-xs text-gray-500 mt-1 text-right">
+              QBO Agent
+            </div>
+          </div>
+        </div>
+        
+        <!-- Messages will be added here dynamically -->
+      </div>
+      
+      <!-- Typing Indicator -->
+      <div id="typingIndicator" class="px-4 py-2 flex items-center text-xs text-gray-500 hidden">
+        <div class="dot-flashing mr-2"></div>
+        Processing...
+      </div>
+      
+      <!-- Input Area -->
+      <div class="bg-white border-t p-3">
+        <div class="flex items-center space-x-2">
+          <div class="relative flex-1">
+            <input 
+              id="messageInput" 
+              type="text" 
+              placeholder="Ask me to fetch QuickBooks data..." 
+              class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+            <div id="suggestions" class="absolute bottom-full left-0 w-full bg-white border rounded-lg shadow-lg hidden max-h-40 overflow-y-auto z-10">
+              <!-- Suggestions will be added here dynamically -->
+            </div>
+          </div>
+          <button id="sendButton" class="bg-blue-500 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-blue-600 focus:outline-none">
+            <i class="fas fa-paper-plane"></i>
+          </button>
+        </div>
+        <div class="text-xs text-gray-500 mt-2">
+          Try: "Fetch profit and loss report for last month"
+        </div>
+      </div>
+    </div>
+    
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+      <div class="bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
+        <div class="border-b px-4 py-3 flex items-center justify-between">
+          <h3 class="font-semibold text-gray-800">Settings</h3>
+          <button id="closeSettingsBtn" class="text-gray-600 hover:text-gray-800">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        
+        <div class="p-4">
+          <!-- Settings Tabs -->
+          <div class="border-b border-gray-200 mb-4">
+            <ul class="flex -mb-px">
+              <li class="mr-2">
+                <button id="qboSettingsTab" class="inline-block py-2 px-4 text-sm font-medium text-center text-blue-600 border-b-2 border-blue-600 active">
+                  QuickBooks
+                </button>
+              </li>
+              <li class="mr-2">
+                <button id="openaiSettingsTab" class="inline-block py-2 px-4 text-sm font-medium text-center text-gray-500 hover:text-gray-600 border-b-2 border-transparent hover:border-gray-300">
+                  NLP Settings
+                </button>
+              </li>
+            </ul>
+          </div>
+          
+          <!-- QuickBooks Settings Panel -->
+          <div id="qboSettingsPanel" class="space-y-4">
+            <div>
+              <label for="clientId" class="block text-sm font-medium text-gray-700 mb-1">Client ID</label>
+              <input 
+                id="clientId" 
+                type="text" 
+                class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter QuickBooks Client ID"
+              >
+            </div>
+            
+            <div>
+              <label for="clientSecret" class="block text-sm font-medium text-gray-700 mb-1">Client Secret</label>
+              <input 
+                id="clientSecret" 
+                type="password" 
+                class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter QuickBooks Client Secret"
+              >
+            </div>
+            
+            <div>
+              <label for="companyId" class="block text-sm font-medium text-gray-700 mb-1">Company ID</label>
+              <input 
+                id="companyId" 
+                type="text" 
+                class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter QuickBooks Company ID"
+              >
+            </div>
+            
+            <div class="flex justify-between pt-2">
+              <div>
+                <button id="disconnectBtn" class="px-4 py-2 text-sm text-red-600 hover:text-red-800">
+                  Disconnect
+                </button>
+                <button id="resetBtn" class="px-4 py-2 text-sm text-orange-600 hover:text-orange-800">
+                  Deep Reset
+                </button>
+              </div>
+              <div>
+                <button id="saveQboSettingsBtn" class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 focus:outline-none">
+                  Save
+                </button>
+                <button id="connectBtn" class="bg-green-500 text-white px-4 py-2 rounded-md hover:bg-green-600 focus:outline-none ml-2">
+                  Connect
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- OpenAI Settings Panel (initially hidden) -->
+          <div id="openaiSettingsPanel" class="space-y-4 hidden">
+            <div>
+              <label for="openaiApiKey" class="block text-sm font-medium text-gray-700 mb-1">OpenAI API Key</label>
+              <input 
+                id="openaiApiKey" 
+                type="password" 
+                class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter OpenAI API Key"
+              >
+              <p class="text-xs text-gray-500 mt-1">
+                Your API key is securely stored in Google's Script Properties and never shared.
+              </p>
+            </div>
+            
+            <div class="flex justify-between pt-2">
+              <button id="testOpenaiBtn" class="bg-purple-500 text-white px-4 py-2 rounded-md hover:bg-purple-600 focus:outline-none">
+                Test Connection
+              </button>
+              <button id="saveOpenaiSettingsBtn" class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 focus:outline-none">
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <?!= include('Script'); ?>
+  </body>
+</html> 

@@ -1,0 +1,580 @@
+<script>
+  // Global state
+  let conversationHistory = [];
+  let authWindowReference = null;
+  let suggestions = [
+    "Fetch profit and loss report for last month",
+    "Get invoices from last quarter into Sheet1",
+    "Show me all customers",
+    "Fetch balance sheet year to date",
+    "Get expenses for this month"
+  ];
+  
+  // DOM elements
+  const elements = {
+    chatContainer: document.getElementById('chatContainer'),
+    messageInput: document.getElementById('messageInput'),
+    sendButton: document.getElementById('sendButton'),
+    typingIndicator: document.getElementById('typingIndicator'),
+    qboStatus: document.getElementById('qboStatus'),
+    openaiStatus: document.getElementById('openaiStatus'),
+    settingsBtn: document.getElementById('settingsBtn'),
+    settingsModal: document.getElementById('settingsModal'),
+    closeSettingsBtn: document.getElementById('closeSettingsBtn'),
+    
+    // Tab navigation
+    qboSettingsTab: document.getElementById('qboSettingsTab'),
+    openaiSettingsTab: document.getElementById('openaiSettingsTab'),
+    qboSettingsPanel: document.getElementById('qboSettingsPanel'),
+    openaiSettingsPanel: document.getElementById('openaiSettingsPanel'),
+    
+    // QBO settings
+    saveQboSettingsBtn: document.getElementById('saveQboSettingsBtn'),
+    connectBtn: document.getElementById('connectBtn'),
+    disconnectBtn: document.getElementById('disconnectBtn'),
+    resetBtn: document.getElementById('resetBtn'),
+    clientId: document.getElementById('clientId'),
+    clientSecret: document.getElementById('clientSecret'),
+    companyId: document.getElementById('companyId'),
+    
+    // OpenAI settings
+    openaiApiKey: document.getElementById('openaiApiKey'),
+    saveOpenaiSettingsBtn: document.getElementById('saveOpenaiSettingsBtn'),
+    testOpenaiBtn: document.getElementById('testOpenaiBtn'),
+    
+    suggestions: document.getElementById('suggestions')
+  };
+  
+  // Initialize the app
+  document.addEventListener('DOMContentLoaded', function() {
+    // Set up event listeners
+    setupEventListeners();
+    
+    // Check OAuth status
+    checkOAuthStatus();
+    
+    // Check OpenAI status
+    checkOpenAIStatus();
+    
+    // Load saved credentials
+    loadCredentials();
+    
+    // Explicitly add event listeners for OpenAI settings buttons
+    const saveOpenaiSettingsBtn = document.getElementById('saveOpenaiSettingsBtn');
+    if (saveOpenaiSettingsBtn) {
+      saveOpenaiSettingsBtn.addEventListener('click', function() {
+        console.log('Save OpenAI settings button clicked');
+        saveOpenAISettings();
+      });
+    } else {
+      console.error('Save OpenAI settings button not found');
+    }
+    
+    const testOpenaiBtn = document.getElementById('testOpenaiBtn');
+    if (testOpenaiBtn) {
+      testOpenaiBtn.addEventListener('click', function() {
+        console.log('Test OpenAI connection button clicked');
+        testOpenAIConnection();
+      });
+    } else {
+      console.error('Test OpenAI connection button not found');
+    }
+  });
+  
+  // Set up event listeners
+  function setupEventListeners() {
+    // Chat input
+    elements.messageInput.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        sendMessage();
+      }
+    });
+    
+    elements.sendButton.addEventListener('click', sendMessage);
+    
+    // Display suggestions as user types
+    elements.messageInput.addEventListener('input', function() {
+      showSuggestions();
+    });
+    
+    // Hide suggestions when clicking elsewhere
+    document.addEventListener('click', function(e) {
+      if (e.target !== elements.messageInput && e.target !== elements.suggestions) {
+        elements.suggestions.classList.add('hidden');
+      }
+    });
+    
+    // Settings modal
+    elements.settingsBtn.addEventListener('click', function() {
+      elements.settingsModal.classList.remove('hidden');
+    });
+    
+    elements.closeSettingsBtn.addEventListener('click', function() {
+      elements.settingsModal.classList.add('hidden');
+    });
+    
+    // Tab navigation
+    elements.qboSettingsTab.addEventListener('click', function() {
+      // Show QBO panel, hide OpenAI panel
+      elements.qboSettingsPanel.classList.remove('hidden');
+      elements.openaiSettingsPanel.classList.add('hidden');
+      
+      // Update tab styling
+      elements.qboSettingsTab.classList.add('text-blue-600', 'border-blue-600');
+      elements.qboSettingsTab.classList.remove('text-gray-500', 'border-transparent');
+      
+      elements.openaiSettingsTab.classList.remove('text-blue-600', 'border-blue-600');
+      elements.openaiSettingsTab.classList.add('text-gray-500', 'border-transparent');
+    });
+    
+    elements.openaiSettingsTab.addEventListener('click', function() {
+      // Show OpenAI panel, hide QBO panel
+      elements.openaiSettingsPanel.classList.remove('hidden');
+      elements.qboSettingsPanel.classList.add('hidden');
+      
+      // Update tab styling
+      elements.openaiSettingsTab.classList.add('text-blue-600', 'border-blue-600');
+      elements.openaiSettingsTab.classList.remove('text-gray-500', 'border-transparent');
+      
+      elements.qboSettingsTab.classList.remove('text-blue-600', 'border-blue-600');
+      elements.qboSettingsTab.classList.add('text-gray-500', 'border-transparent');
+    });
+    
+    // Save QBO credentials
+    elements.saveQboSettingsBtn.addEventListener('click', saveCredentials);
+    
+    // Connect to QuickBooks
+    elements.connectBtn.addEventListener('click', connectToQuickBooks);
+    
+    // Disconnect from QuickBooks
+    elements.disconnectBtn.addEventListener('click', disconnectFromQuickBooks);
+    
+    // Reset auth
+    elements.resetBtn.addEventListener('click', resetAuth);
+    
+    // OpenAI settings
+    elements.saveOpenaiSettingsBtn.addEventListener('click', saveOpenAISettings);
+    elements.testOpenaiBtn.addEventListener('click', testOpenAIConnection);
+  }
+  
+  // Send a message to the server
+  function sendMessage() {
+    const messageText = elements.messageInput.value.trim();
+    
+    if (!messageText) return;
+    
+    // Add user message to the chat
+    addMessage(messageText, 'user');
+    
+    // Clear input
+    elements.messageInput.value = '';
+    
+    // Show typing indicator
+    elements.typingIndicator.classList.remove('hidden');
+    
+    // Add to conversation history
+    conversationHistory.push({ role: 'user', content: messageText });
+    
+    // Process the message with the server
+    google.script.run
+      .withSuccessHandler(handleResponse)
+      .withFailureHandler(handleError)
+      .processQuery(messageText, conversationHistory);
+  }
+  
+  // Handle the response from the server
+  function handleResponse(response) {
+    // Hide typing indicator
+    elements.typingIndicator.classList.add('hidden');
+    
+    if (!response) {
+      addMessage("Sorry, I couldn't process your request.", 'agent');
+      return;
+    }
+    
+    // Different response types
+    switch (response.type) {
+      case 'text':
+      case 'error':
+        addMessage(response.message, 'agent');
+        break;
+        
+      case 'success':
+        let message = response.message;
+        if (response.data && response.data.rows) {
+          message += ` (${response.data.rows} rows)`;
+        }
+        addMessage(message, 'agent');
+        break;
+        
+      case 'diagnostic':
+        // Convert markdown to HTML for better display
+        let diagnosticHtml = response.message
+          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')  // Bold text
+          .replace(/\n\n/g, '<br><br>')  // Double line breaks
+          .replace(/\n/g, '<br>')  // Single line breaks
+          .replace(/##\s(.*?)(<br>|$)/g, '<h3>$1</h3>')  // Level 2 headers
+          .replace(/✅/g, '<span style="color:green">✅</span>')  // Green checkmarks
+          .replace(/❌/g, '<span style="color:red">❌</span>');  // Red X marks
+        
+        addMessage(diagnosticHtml, 'agent');
+        break;
+        
+      case 'help':
+        let helpContent = response.message + '<ul class="examples-list mt-2">';
+        response.examples.forEach(example => {
+          helpContent += `<li>${example}</li>`;
+        });
+        helpContent += '</ul>';
+        addMessage(helpContent, 'agent');
+        break;
+        
+      default:
+        addMessage(JSON.stringify(response), 'agent');
+    }
+    
+    // Add to conversation history
+    conversationHistory.push({ 
+      role: 'assistant', 
+      content: typeof response === 'string' ? response : response.message 
+    });
+  }
+  
+  // Handle errors
+  function handleError(error) {
+    elements.typingIndicator.classList.add('hidden');
+    addMessage('Error: ' + error.toString(), 'agent');
+  }
+  
+  // Add a message to the chat
+  function addMessage(content, sender) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message ' + (sender === 'user' ? 'flex justify-start' : 'flex justify-end');
+    
+    const bubbleDiv = document.createElement('div');
+    bubbleDiv.className = (sender === 'user' ? 'user-message bg-blue-50' : 'agent-message bg-white') + 
+                          ' rounded-lg shadow-sm p-3 max-w-xs';
+    
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'text-sm';
+    contentDiv.innerHTML = content;
+    
+    const metaDiv = document.createElement('div');
+    metaDiv.className = 'text-xs text-gray-500 mt-1 ' + (sender === 'user' ? 'text-left' : 'text-right');
+    metaDiv.textContent = sender === 'user' ? 'You' : 'QBO Agent v7';
+    
+    bubbleDiv.appendChild(contentDiv);
+    bubbleDiv.appendChild(metaDiv);
+    messageDiv.appendChild(bubbleDiv);
+    
+    elements.chatContainer.appendChild(messageDiv);
+    
+    // Scroll to bottom
+    elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+  }
+  
+  // Check OAuth status
+  function checkOAuthStatus() {
+    google.script.run
+      .withSuccessHandler(updateAuthStatus)
+      .withFailureHandler(function(error) {
+        console.error('Auth status check failed:', error);
+      })
+      .getOAuthToken();
+  }
+  
+  // Update authentication status in UI
+  function updateAuthStatus(authInfo) {
+    if (authInfo.hasAccess) {
+      elements.qboStatus.innerHTML = '<i class="fas fa-check-circle"></i> Connected';
+      elements.qboStatus.className = 'text-green-500';
+      elements.connectBtn.textContent = 'Reconnect';
+    } else {
+      elements.qboStatus.innerHTML = '<i class="fas fa-times-circle"></i> Not Connected';
+      elements.qboStatus.className = 'text-red-500';
+      elements.connectBtn.textContent = 'Connect';
+    }
+  }
+  
+  // Connect to QuickBooks via OAuth
+  function connectToQuickBooks() {
+    google.script.run
+      .withSuccessHandler(function(authInfo) {
+        if (authInfo.authorizationUrl) {
+          // Open OAuth window
+          authWindowReference = window.open(authInfo.authorizationUrl, 'QuickBooks Authorization', 
+                                           'width=800,height=600');
+          
+          // Check auth status after a delay
+          setTimeout(function() {
+            checkOAuthStatus();
+          }, 1000);
+        }
+      })
+      .withFailureHandler(function(error) {
+        addMessage('Authorization failed: ' + error.toString(), 'agent');
+      })
+      .getOAuthToken();
+  }
+  
+  // Add reset button to the existing UI instead
+  const resetBtn = document.createElement('button');
+  resetBtn.id = 'resetBtn';
+  resetBtn.className = 'px-4 py-2 text-sm text-orange-600 hover:text-orange-800';
+  resetBtn.textContent = 'Deep Reset';
+  
+  // Find the disconnect button and add the reset button after it
+  const disconnectBtn = document.getElementById('disconnectBtn');
+  if (disconnectBtn && disconnectBtn.parentNode) {
+    disconnectBtn.parentNode.insertBefore(resetBtn, disconnectBtn.nextSibling);
+  }
+  
+  // Add reset button handler
+  resetBtn.addEventListener('click', function() {
+    if (confirm('This will completely reset all QuickBooks connections. You will need to reconnect afterward. Continue?')) {
+      google.script.run
+        .withSuccessHandler(function(result) {
+          if (result.success) {
+            alert('OAuth connection completely reset. Please click Connect to set up again.');
+            elements.qboStatus.innerHTML = '<i class="fas fa-times-circle"></i> Not Connected';
+            elements.qboStatus.className = 'text-red-500';
+            addMessage('QuickBooks connection has been fully reset. Please reconnect.', 'agent');
+          } else {
+            addMessage('Reset failed: ' + result.error, 'agent');
+          }
+        })
+        .withFailureHandler(function(error) {
+          addMessage('Reset error: ' + error.toString(), 'agent');
+        })
+        .resetAllAuth();
+    }
+  });
+  
+  // Disconnect from QuickBooks
+  function disconnectFromQuickBooks() {
+    if (confirm('Are you sure you want to disconnect from QuickBooks?')) {
+      google.script.run
+        .withSuccessHandler(function(result) {
+          if (result.success) {
+            elements.qboStatus.innerHTML = '<i class="fas fa-times-circle"></i> Not Connected';
+            elements.qboStatus.className = 'text-red-500';
+            addMessage(result.message || 'Disconnected from QuickBooks', 'agent');
+          }
+        })
+        .withFailureHandler(function(error) {
+          addMessage('Failed to disconnect: ' + error.toString(), 'agent');
+        })
+        .logoutQuickBooks();
+    }
+  }
+  
+  // Save QuickBooks credentials
+  function saveCredentials() {
+    const credentials = {
+      clientId: elements.clientId.value.trim(),
+      clientSecret: elements.clientSecret.value.trim(),
+      companyId: elements.companyId.value.trim()
+    };
+    
+    if (!credentials.clientId || !credentials.clientSecret) {
+      alert('Please enter Client ID and Client Secret');
+      return;
+    }
+    
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result.success) {
+          addMessage('QuickBooks credentials saved', 'agent');
+          elements.settingsModal.classList.add('hidden');
+        } else {
+          addMessage('Failed to save credentials: ' + result.error, 'agent');
+        }
+      })
+      .withFailureHandler(function(error) {
+        addMessage('Error saving credentials: ' + error.toString(), 'agent');
+      })
+      .saveCredentials(credentials);
+  }
+  
+  // Load saved credentials
+  function loadCredentials() {
+    google.script.run
+      .withSuccessHandler(function(credentials) {
+        elements.clientId.value = credentials.clientId || '';
+        elements.clientSecret.value = credentials.clientSecret || '';
+        elements.companyId.value = credentials.companyId || '';
+      })
+      .withFailureHandler(function(error) {
+        console.error('Failed to load credentials:', error);
+      })
+      .getCredentials();
+  }
+  
+  // Show suggestions based on input
+  function showSuggestions() {
+    const input = elements.messageInput.value.toLowerCase();
+    
+    if (!input) {
+      elements.suggestions.classList.add('hidden');
+      return;
+    }
+    
+    // Filter suggestions based on input
+    const matchingSuggestions = suggestions.filter(suggestion => 
+      suggestion.toLowerCase().includes(input)
+    );
+    
+    if (matchingSuggestions.length === 0) {
+      elements.suggestions.classList.add('hidden');
+      return;
+    }
+    
+    // Build suggestion list
+    elements.suggestions.innerHTML = '';
+    
+    matchingSuggestions.forEach(suggestion => {
+      const item = document.createElement('div');
+      item.className = 'suggestion-item px-3 py-2 text-sm border-b last:border-0';
+      item.textContent = suggestion;
+      
+      item.addEventListener('click', function() {
+        elements.messageInput.value = suggestion;
+        elements.suggestions.classList.add('hidden');
+        elements.messageInput.focus();
+      });
+      
+      elements.suggestions.appendChild(item);
+    });
+    
+    elements.suggestions.classList.remove('hidden');
+  }
+  
+  // Save OpenAI settings
+  function saveOpenAISettings() {
+    const apiKey = elements.openaiApiKey.value.trim();
+    
+    if (!apiKey) {
+      showNotification('Please enter your OpenAI API key', 'error');
+      return;
+    }
+    
+    // Show saving indicator
+    showNotification('Saving OpenAI settings...', 'info');
+    
+    // Call the server-side function to save the API key
+    google.script.run
+      .withSuccessHandler(function(response) {
+        if (response.success) {
+          // Clear the API key field (for security)
+          elements.openaiApiKey.value = '';
+          
+          // Update the status indicator
+          updateOpenAIStatus(true);
+          
+          // Show success message
+          showNotification('OpenAI API key saved successfully!', 'success');
+        } else {
+          showNotification('Error saving OpenAI API key: ' + (response.error || 'Unknown error'), 'error');
+        }
+      })
+      .withFailureHandler(function(error) {
+        showNotification('Error saving OpenAI API key: ' + error.message, 'error');
+      })
+      .saveOpenAISettings({ apiKey: apiKey });
+  }
+  
+  // Test OpenAI connection
+  function testOpenAIConnection() {
+    // Show testing indicator
+    showNotification('Testing OpenAI connection...', 'info');
+    
+    // Call the server-side function to test the connection
+    google.script.run
+      .withSuccessHandler(function(response) {
+        if (response.success) {
+          showNotification('OpenAI connection test successful!', 'success');
+        } else {
+          showNotification('OpenAI connection test failed: ' + (response.message || 'Unknown error'), 'error');
+        }
+      })
+      .withFailureHandler(function(error) {
+        showNotification('Error testing OpenAI connection: ' + error.message, 'error');
+      })
+      .testOpenAIConnection();
+  }
+  
+  // Check OpenAI status
+  function checkOpenAIStatus() {
+    google.script.run
+      .withSuccessHandler(function(response) {
+        updateOpenAIStatus(response.hasApiKey);
+      })
+      .withFailureHandler(function(error) {
+        console.error('Error checking OpenAI status: ' + error.message);
+        updateOpenAIStatus(false);
+      })
+      .getOpenAISettings();
+  }
+  
+  // Update OpenAI status indicator
+  function updateOpenAIStatus(isConfigured) {
+    if (isConfigured) {
+      elements.openaiStatus.innerHTML = '<i class="fas fa-check-circle"></i> Configured';
+      elements.openaiStatus.classList.remove('text-red-500');
+      elements.openaiStatus.classList.add('text-green-500');
+    } else {
+      elements.openaiStatus.innerHTML = '<i class="fas fa-times-circle"></i> Not Configured';
+      elements.openaiStatus.classList.remove('text-green-500');
+      elements.openaiStatus.classList.add('text-red-500');
+    }
+  }
+  
+  // Reset auth
+  function resetAuth() {
+    if (confirm('This will completely reset all authentication settings. Use only as a last resort for persistent issues. Continue?')) {
+      google.script.run
+        .withSuccessHandler(function(response) {
+          if (response.success) {
+            showNotification(response.message, 'success');
+            checkOAuthStatus();
+          } else {
+            showNotification('Error: ' + response.error, 'error');
+          }
+        })
+        .withFailureHandler(function(error) {
+          showNotification('Error: ' + error.message, 'error');
+        })
+        .resetAllAuth();
+    }
+  }
+  
+  // Make sure this function exists
+  function showNotification(message, type = 'info') {
+    // Create notification element if it doesn't exist
+    let notification = document.getElementById('notification');
+    if (!notification) {
+      notification = document.createElement('div');
+      notification.id = 'notification';
+      notification.className = 'fixed bottom-4 right-4 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 transition-opacity duration-300';
+      document.body.appendChild(notification);
+    }
+    
+    // Set color based on type
+    if (type === 'success') {
+      notification.className = notification.className.replace(/bg-\w+-\d+/g, '') + ' bg-green-500';
+    } else if (type === 'error') {
+      notification.className = notification.className.replace(/bg-\w+-\d+/g, '') + ' bg-red-500';
+    } else {
+      notification.className = notification.className.replace(/bg-\w+-\d+/g, '') + ' bg-blue-500';
+    }
+    
+    // Set message and show
+    notification.textContent = message;
+    notification.style.opacity = '1';
+    
+    // Hide after 3 seconds
+    setTimeout(function() {
+      notification.style.opacity = '0';
+    }, 3000);
+  }
+</script> 

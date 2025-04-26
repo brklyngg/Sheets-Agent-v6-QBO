@@ -1,0 +1,43 @@
+{
+  "timeZone": "America/New_York",
+  "dependencies": {
+    "libraries": [{
+      "userSymbol": "OAuth2",
+      "libraryId": "1B7FSrk5Zi6L1rSxxTDgDEUsPzlukDsi4KGuTMorsTQHhGBzBkMun4iDF",
+      "version": "43"
+    }]
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/script.container.ui",
+    "https://www.googleapis.com/auth/spreadsheets.currentonly",
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "urlFetchWhitelist": [
+    "https://*.intuit.com/",
+    "https://*.quickbooks.com/",
+    "https://quickbooks.api.intuit.com/",
+    "https://oauth.platform.intuit.com/",
+    "https://appcenter.intuit.com/",
+    "https://accounts.platform.intuit.com/",
+    "https://developer.api.intuit.com/",
+    "https://api.openai.com/"
+  ],
+  "addOns": {
+    "common": {
+      "name": "QBO Agent V7",
+      "logoUrl": "https://www.gstatic.com/images/icons/material/system/1x/enhanced_encryption_black_48dp.png",
+      "universalActions": [{
+        "label": "Open QBO Agent V7",
+        "runFunction": "onOpen"
+      }]
+    },
+    "sheets": {
+      "homepageTrigger": {
+        "runFunction": "showSidebar"
+      }
+    }
+  }
+}

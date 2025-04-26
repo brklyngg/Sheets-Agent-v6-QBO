@@ -1,0 +1,133 @@
+<style>
+  /* Custom scrollbar for chat container */
+  #chatContainer::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  #chatContainer::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+  }
+  
+  #chatContainer::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 3px;
+  }
+  
+  #chatContainer::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+  }
+  
+  /* Typing indicator animation */
+  .dot-flashing {
+    position: relative;
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background-color: #9880ff;
+    color: #9880ff;
+    animation: dotFlashing 1s infinite linear alternate;
+    animation-delay: .5s;
+  }
+  
+  .dot-flashing::before, .dot-flashing::after {
+    content: '';
+    display: inline-block;
+    position: absolute;
+    top: 0;
+  }
+  
+  .dot-flashing::before {
+    left: -12px;
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background-color: #9880ff;
+    color: #9880ff;
+    animation: dotFlashing 1s infinite alternate;
+    animation-delay: 0s;
+  }
+  
+  .dot-flashing::after {
+    left: 12px;
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background-color: #9880ff;
+    color: #9880ff;
+    animation: dotFlashing 1s infinite alternate;
+    animation-delay: 1s;
+  }
+  
+  @keyframes dotFlashing {
+    0% {
+      background-color: #9880ff;
+    }
+    50%, 100% {
+      background-color: #ebe6ff;
+    }
+  }
+  
+  /* Message animations */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  
+  .message {
+    animation: fadeIn 0.3s ease-out;
+  }
+  
+  /* Status indicators */
+  .status-connected {
+    color: #4CAF50;
+  }
+  
+  .status-disconnected {
+    color: #FF5722;
+  }
+  
+  /* Chat bubbles */
+  .user-message {
+    background-color: #E3F2FD;
+    border-radius: 18px 18px 18px 4px;
+  }
+  
+  .agent-message {
+    background-color: white;
+    border-radius: 18px 18px 4px 18px;
+  }
+  
+  /* Code blocks in chat */
+  pre {
+    background-color: #f8f8f8;
+    border-radius: 4px;
+    padding: 10px;
+    overflow-x: auto;
+    font-family: monospace;
+    font-size: 13px;
+  }
+  
+  /* Examples list in help responses */
+  .examples-list {
+    padding-left: 20px;
+  }
+  
+  .examples-list li {
+    margin-bottom: 8px;
+    position: relative;
+  }
+  
+  .examples-list li:before {
+    content: '•';
+    position: absolute;
+    left: -15px;
+    color: #9880ff;
+  }
+  
+  /* Suggestion item hover effect */
+  .suggestion-item:hover {
+    background-color: #f1f5f9;
+    cursor: pointer;
+  }
+</style> 

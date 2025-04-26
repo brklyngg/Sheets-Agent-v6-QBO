@@ -1,0 +1,1488 @@
+/**
+ * Natural Language Processing Service
+ * Functions for analyzing and interpreting user queries.
+ */
+
+/**
+ * Analyzes a user query to determine the intent.
+ * 
+ * @param {string} query - The user's text query
+ * @param {Array} conversationHistory - Previous messages for context
+ * @return {Object} The interpreted intent
+ */
+function analyzeQueryIntent(query, conversationHistory = []) {
+  // Add debug logging
+  console.log('Analyzing query: ' + query);
+  console.log('Conversation history: ' + JSON.stringify(conversationHistory));
+  
+  // Quick check for simple sheet operations that don't need AI processing
+  const text = query.toLowerCase();
+  if ((text.includes('create') || text.includes('new') || text.includes('add')) && 
+      (text.includes('sheet') || text.includes('tab'))) {
+    
+    console.log('Detected simple sheet creation request, using direct intent matching...');
+    // Use the basic implementation which now has improved sheet creation handling
+    return analyzeQueryIntentBasic(query, conversationHistory);
+  }
+  
+  // First try to use OpenAI for advanced intent recognition
+  try {
+    // Get available API calls for context
+    const apiCallList = getAvailableApiCalls();
+    
+    // Process with OpenAI
+    console.log('Attempting to process with OpenAI...');
+    const openaiIntent = processWithOpenAI(query, conversationHistory, apiCallList);
+    
+    // If we got a valid intent from OpenAI, use it
+    if (openaiIntent && openaiIntent.type !== 'unknown') {
+      // Log successful OpenAI processing
+      console.log('Successfully processed intent with OpenAI: ' + JSON.stringify(openaiIntent));
+      
+      // Additional validation for sheet operations
+      if (openaiIntent.type === 'create' && openaiIntent.action === 'createSheet') {
+        // Make sure we have a sheet name
+        if (!openaiIntent.parameters.name && text.match(/called|named/i)) {
+          // Try to extract the name from the query if OpenAI missed it
+          const nameMatch = text.match(/(?:called|named)\s+["']?([^"'.,]+)["']?/i);
+          if (nameMatch && nameMatch[1]) {
+            openaiIntent.parameters.name = nameMatch[1].trim();
+            console.log('Added missing sheet name from pattern matching: ' + openaiIntent.parameters.name);
+          }
+        }
+        
+        // Check for emoji filling that OpenAI might have missed
+        if (text.includes('fill') && text.includes('emoji') && !openaiIntent.parameters.fillWith) {
+          // Add emoji filling parameter
+          let emojiType = 'poop emoji'; // Default
+          if (text.includes('cat')) emojiType = 'cat emoji';
+          else if (text.includes('heart')) emojiType = 'heart emoji';
+          else if (text.includes('smile')) emojiType = 'smile emoji';
+          else if (text.includes('star')) emojiType = 'star emoji';
+          else if (text.includes('fire')) emojiType = 'fire emoji';
+          
+          openaiIntent.parameters.fillWith = emojiType;
+          console.log('Added missing emoji fill parameter: ' + emojiType);
+        }
+      }
+      
+      return openaiIntent;
+    }
+  } catch (error) {
+    // Log the error but continue with fallback
+    console.error('Error processing with OpenAI: ' + error.toString());
+  }
+  
+  // Fall back to the basic implementation for backward compatibility
+  console.log('Falling back to basic intent recognition');
+  return analyzeQueryIntentBasic(query, conversationHistory);
+}
+
+/**
+ * Basic implementation of intent analysis using keyword matching.
+ * This serves as a fallback when OpenAI is unavailable or fails.
+ * 
+ * @param {string} query - The user's text query
+ * @param {Array} conversationHistory - Previous messages for context
+ * @return {Object} The interpreted intent
+ */
+function analyzeQueryIntentBasic(query, conversationHistory = []) {
+  // Initialize intent object
+  let intent = {
+    type: 'unknown',
+    action: '',
+    entity: '',
+    filters: {},
+    parameters: {},
+    text: query  // Store original query text
+  };
+  
+  // Convert to lowercase for easier matching
+  const text = query.toLowerCase();
+  
+  // PRIORITY CHECK: First check for sheet creation requests
+  // This section runs before any other intent checking
+  if ((text.includes('create') || text.includes('new') || text.includes('add')) && 
+      (text.includes('sheet') || text.includes('tab'))) {
+    
+    console.log('Priority detection: Sheet creation request detected');
+    
+    // Check if this is a combined operation (create sheet AND import data)
+    const isImportRequest = text.includes('import') || text.includes('fetch') || text.includes('get') || 
+                           text.includes('pull') || text.includes('with');
+    
+    // Specifically check for chart of accounts
+    const isChartOfAccounts = text.includes('chart of accounts') || text.includes('accounts') || 
+                             text.includes('account list');
+    
+    // Try to extract the sheet name with various patterns
+    let sheetName = null;
+    
+    // Look for patterns like "called X", "named X"
+    const namePatterns = [
+      /(?:called|named)\s+["']?([^"'.,]+)["']?/i,  // "called X" or 'named X'
+      /(?:sheet|tab)\s+(?:called|named)?\s*["']?([^"'.,]+)["']?/i,  // "sheet X" or "tab X"
+      /create\s+(?:a\s+)?(?:new\s+)?(?:sheet|tab)\s+["']?([^"'.,]+)["']?/i,  // "create a new sheet X"
+      /new\s+(?:sheet|tab)\s+["']?([^"'.,]+)["']?/i  // "new sheet X"
+    ];
+    
+    for (const pattern of namePatterns) {
+      const match = text.match(pattern);
+      if (match && match[1]) {
+        sheetName = match[1].trim();
+        console.log('Found sheet name with pattern: ' + pattern + ' -> ' + sheetName);
+        break;
+      }
+    }
+    
+    // If no pattern matched, take the word after "sheet" or "tab"
+    if (!sheetName) {
+      const basicMatch = text.match(/(?:sheet|tab)\s+([a-zA-Z0-9_]+)/i);
+      if (basicMatch && basicMatch[1]) {
+        sheetName = basicMatch[1].trim();
+        console.log('Found sheet name with basic pattern: ' + sheetName);
+      }
+    }
+    
+    // If it's a combined operation to create sheet and import chart of accounts
+    if (isImportRequest && isChartOfAccounts && sheetName) {
+      console.log('Combined operation: Create sheet and import chart of accounts');
+      intent.type = 'fetch';
+      intent.action = 'query';
+      intent.entity = 'Account';
+      intent.destination = sheetName;
+      
+      // Remember that we need to create the sheet first
+      intent.parameters.createSheet = true;
+      intent.parameters.name = sheetName;
+      
+      return intent;
+    }
+    
+    // If it's just a sheet creation
+    intent.type = 'create';
+    intent.action = 'createSheet';
+    
+    // Use the extracted name
+    if (sheetName) {
+      intent.parameters.name = sheetName;
+    }
+    
+    // Check for emoji filling in the same request
+    if (text.includes('fill') && text.includes('emoji')) {
+      // Determine which emoji type to use
+      let emojiType = 'poop emoji'; // Default
+      
+      if (text.includes('cat emoji') || (text.includes('cat') && text.includes('emoji'))) {
+        emojiType = 'cat emoji';
+      } else if (text.includes('heart emoji') || (text.includes('heart') && text.includes('emoji'))) {
+        emojiType = 'heart emoji';
+      } else if (text.includes('smile emoji') || (text.includes('smile') && text.includes('emoji'))) {
+        emojiType = 'smile emoji';
+      } else if (text.includes('star emoji') || (text.includes('star') && text.includes('emoji'))) {
+        emojiType = 'star emoji';
+      } else if (text.includes('fire emoji') || (text.includes('fire') && text.includes('emoji'))) {
+        emojiType = 'fire emoji';
+      }
+      
+      intent.parameters.fillWith = emojiType;
+      console.log('Will fill sheet with: ' + emojiType);
+    }
+    
+    return intent; // Return immediately when we have a sheet creation match
+  }
+  
+  // Continue with the normal intent analysis if it wasn't a sheet creation request
+  // First, check if this is a follow-up response to a previous question
+  if (conversationHistory && conversationHistory.length >= 2) {
+    const lastMessage = conversationHistory[conversationHistory.length - 1];
+    
+    // If the last message was from the assistant asking for a sheet name
+    if (lastMessage.role === 'assistant' && 
+        (lastMessage.content.includes('name for the new sheet') || 
+         lastMessage.content.includes('specify a name'))) {
+      
+      console.log('Detected follow-up response for sheet name: ' + text);
+      
+      // Use the provided text as the sheet name
+      intent.type = 'create';
+      intent.action = 'createSheet';
+      intent.parameters.name = text.trim();
+      
+      // Check previous user message for context about filling with emojis
+      if (conversationHistory.length >= 3) {
+        const prevUserMsg = conversationHistory[conversationHistory.length - 2];
+        if (prevUserMsg.role === 'user' && 
+            prevUserMsg.content.toLowerCase().includes('emoji')) {
+          
+          // Extract emoji type if present
+          const emojiMatch = prevUserMsg.content.toLowerCase().match(/([a-z]+)\s+emoji/);
+          if (emojiMatch && emojiMatch[1]) {
+            intent.parameters.fillWith = emojiMatch[1] + ' emoji';
+            console.log('Adding emoji fill from previous context: ' + intent.parameters.fillWith);
+          } else {
+            // Default to poop emoji if just "emoji" was mentioned
+            intent.parameters.fillWith = 'poop emoji';
+          }
+        }
+      }
+      
+      return intent;
+    }
+  }
+  
+  // Check for conversation context from previous messages
+  if (conversationHistory && conversationHistory.length > 0) {
+    console.log('Checking conversation context...');
+    // Check if we were waiting for a sheet name in the previous interaction
+    const lastAssistantMessage = conversationHistory.filter(msg => msg.role === 'assistant').pop();
+    const lastUserMessage = conversationHistory.filter(msg => msg.role === 'user').pop();
+    
+    console.log('Last assistant message: ' + JSON.stringify(lastAssistantMessage));
+    console.log('Last user message: ' + JSON.stringify(lastUserMessage));
+    
+    if (lastAssistantMessage && 
+        lastAssistantMessage.content && 
+        lastAssistantMessage.content.includes('specify a name for the new sheet')) {
+      
+      console.log('Found sheet name request, using current query as sheet name: ' + text);
+      
+      // User is providing a sheet name in response to our question
+      intent.type = 'create';
+      intent.action = 'createSheet';
+      intent.parameters.name = text;
+      
+      // Get the original entity type from the previous user message
+      if (lastUserMessage && lastUserMessage.content) {
+        const prevContent = lastUserMessage.content.toLowerCase();
+        console.log('Previous user content: ' + prevContent);
+        
+        if ((prevContent.includes('profit') && prevContent.includes('loss')) || 
+            prevContent.includes('p&l') || 
+            prevContent.includes('p and l')) {
+          
+          intent.type = 'fetch';
+          intent.action = 'report';
+          intent.entity = 'ProfitAndLoss';
+          intent.destination = text;
+          
+          // Extract year if present in the original message
+          const yearMatch = prevContent.match(/20\d\d/);
+          if (yearMatch) {
+            const year = yearMatch[0];
+            intent.filters.startDate = `${year}-01-01`;
+            intent.filters.endDate = `${year}-12-31`;
+            console.log(`Setting date range for P&L to ${year} full year`);
+          } else {
+            // If no year specified, use current year
+            const currentYear = new Date().getFullYear();
+            intent.filters.startDate = `${currentYear}-01-01`;
+            intent.filters.endDate = `${currentYear}-12-31`;
+            console.log(`No year specified, using current year ${currentYear}`);
+          }
+          
+          // Check for monthly columns in the original request
+          if (prevContent.includes('month') || prevContent.includes('columns')) {
+            intent.parameters.columns = 'monthly';
+          }
+          
+          // Add a flag to ensure the sheet is created before data is fetched
+          intent.parameters.createSheet = true;
+          intent.parameters.name = text;
+          
+          console.log('Setting up P&L fetch with sheet creation first: ' + JSON.stringify(intent));
+        }
+      }
+      
+      console.log('Final intent from conversation context: ' + JSON.stringify(intent));
+      return intent;
+    }
+  }
+  
+  // Check for cell reference queries
+  const cellReferenceRegex = /(?:what(?:'s| is)(?: in| the value of| the content of)?|show me|tell me about|value of|content of) (?:cell |range )?([a-zA-Z]+\d+)/i;
+  const cellMatch = text.match(cellReferenceRegex);
+  if (cellMatch) {
+    intent.type = 'cell_query';
+    intent.action = 'getCellValue';
+    intent.parameters.cellReference = cellMatch[1].toUpperCase();
+    return intent;
+  }
+  
+  // Basic pattern matching
+  if (text.includes('help') || text.includes('what can you do')) {
+    intent.type = 'help';
+  } 
+  else if (text.includes('diagnostic') || text.includes('test connection') || 
+           text.includes('check connection') || text.includes('debug') || 
+           text.includes('troubleshoot') || text.includes('why no data')) {
+    intent.type = 'diagnostic';
+    intent.action = 'runDiagnostic';
+  }
+  // Check for formatting/coloring cells
+  else if ((text.includes('color') || text.includes('highlight') || text.includes('format')) && 
+          (text.includes('cell') || text.includes('row') || text.includes('column') || text.includes('range'))) {
+    
+    console.log('Detected cell formatting request');
+    intent.type = 'modify';
+    intent.action = 'formatRange';
+    
+    // Extract the range to format
+    let range = null;
+    
+    // Look for standard range patterns
+    if (text.includes('row')) {
+      // Extract row number for formatting entire row
+      const rowMatch = text.match(/row\s+(\d+)/);
+      if (rowMatch && rowMatch[1]) {
+        const rowNum = rowMatch[1];
+        range = rowNum + ':' + rowNum; // Format: "1:1" for row 1
+        intent.parameters.range = range;
+      } else if (text.includes('first row')) {
+        intent.parameters.range = '1:1';
+      } else if (text.includes('last row')) {
+        intent.parameters.range = 'last';
+      }
+    } else if (text.includes('column')) {
+      // Extract column letter for formatting entire column
+      const colMatch = text.match(/column\s+([a-zA-Z]+)/);
+      if (colMatch && colMatch[1]) {
+        const colLetter = colMatch[1].toUpperCase();
+        range = colLetter + ':' + colLetter; // Format: "A:A" for column A
+        intent.parameters.range = range;
+      } else if (text.includes('first column')) {
+        intent.parameters.range = 'A:A';
+      }
+    } else if (text.includes('cell')) {
+      // Extract cell reference
+      const cellMatch = text.match(/cell\s+([a-zA-Z]+\d+)/);
+      if (cellMatch && cellMatch[1]) {
+        intent.parameters.range = cellMatch[1];
+      }
+    } else if (text.includes('range')) {
+      // Extract range in A1 notation
+      const rangeMatch = text.match(/range\s+([a-zA-Z]+\d+:[a-zA-Z]+\d+)/);
+      if (rangeMatch && rangeMatch[1]) {
+        intent.parameters.range = rangeMatch[1];
+      }
+    }
+    
+    // If no specific range found, default to first row
+    if (!intent.parameters.range) {
+      intent.parameters.range = '1:1';
+    }
+    
+    // Extract color to apply
+    const colorMatch = text.match(/(red|green|blue|yellow|orange|purple|pink|black|white|gray|grey)/i);
+    if (colorMatch && colorMatch[1]) {
+      const color = colorMatch[1].toLowerCase();
+      intent.parameters.format = { backgroundColor: color };
+    } else {
+      // Default to light gray if no color specified
+      intent.parameters.format = { backgroundColor: '#f3f3f3' };
+    }
+    
+    return intent;
+  }
+  // Check for creation requests before fetch
+  else if (text.includes('create') || text.includes('new') || text.includes('add')) {
+    // Double check for sheet creation again
+    if (text.includes('sheet') || text.includes('tab')) {
+      intent.type = 'create';
+      intent.action = 'createSheet';
+      
+      // Try to extract sheet name
+      const nameMatch = text.match(/(?:called|named)\s+["']?([^"'.,]+)["']?/i);
+      if (nameMatch && nameMatch[1]) {
+        intent.parameters.name = nameMatch[1].trim();
+      } else {
+        // Try to find a name after "sheet" or "tab"
+        const basicMatch = text.match(/(?:sheet|tab)\s+["']?([^"'.,]+)["']?/i);
+        if (basicMatch && basicMatch[1]) {
+          intent.parameters.name = basicMatch[1].trim();
+        }
+      }
+      
+      return intent;
+    }
+  }
+  else if (text.includes('fetch') || text.includes('get') || text.includes('retrieve') || text.includes('show')) {
+    intent.type = 'fetch';
+    
+    // Determine entity type
+    if ((text.includes('profit') && text.includes('loss')) || text.includes('p&l') || text.includes('p and l')) {
+      intent.action = 'report';
+      intent.entity = 'ProfitAndLoss';
+      
+      // Detect if user wants monthly columns
+      if (text.includes('month') || text.includes('columns') || text.includes('full year')) {
+        intent.parameters.columns = 'monthly';
+      }
+      
+      // Set year if mentioned
+      const yearMatch = text.match(/20\d\d/);
+      if (yearMatch) {
+        const year = yearMatch[0];
+        intent.filters.startDate = `${year}-01-01`;
+        intent.filters.endDate = `${year}-12-31`;
+      }
+      
+      // Check for sheet name with quotes
+      const destNameRegex = /to\s+["']([^"']+)["']/i;
+      const destNameMatch = text.match(destNameRegex);
+      
+      if (destNameMatch && destNameMatch[1]) {
+        intent.destination = destNameMatch[1];
+      } else {
+        // Check for sheet name after "called" or "named"
+        const calledNameRegex = /(?:called|named)\s+["']?([^"']+?)["']?(?:\s|$)/i;
+        const calledNameMatch = text.match(calledNameRegex);
+        
+        if (calledNameMatch && calledNameMatch[1]) {
+          intent.destination = calledNameMatch[1];
+        }
+      }
+    } else if (text.includes('balance sheet')) {
+      intent.action = 'report';
+      intent.entity = 'BalanceSheet';
+    } else if (text.includes('invoice') || text.includes('invoices')) {
+      intent.action = 'query';
+      intent.entity = 'Invoice';
+    } else if (text.includes('bill') || text.includes('bills')) {
+      intent.action = 'query';
+      intent.entity = 'Bill';
+    } else if (text.includes('expense') || text.includes('expenses') || text.includes('purchase')) {
+      intent.action = 'query';
+      intent.entity = 'Purchase';
+    } else if (text.includes('customer') || text.includes('customers')) {
+      intent.action = 'query';
+      intent.entity = 'Customer';
+    } else if (text.includes('vendor') || text.includes('vendors')) {
+      intent.action = 'query';
+      intent.entity = 'Vendor';
+    } else if (text.includes('account')) {
+      intent.action = 'query';
+      intent.entity = 'Account';
+    }
+    
+    // Extract date filters if they weren't already set from a year match
+    if (!intent.filters.startDate && !intent.filters.endDate) {
+      if (text.includes('last month')) {
+        const today = new Date();
+        const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+        
+        intent.filters.startDate = lastMonth.toISOString().split('T')[0];
+        intent.filters.endDate = lastMonthEnd.toISOString().split('T')[0];
+      } else if (text.includes('this month')) {
+        const today = new Date();
+        const thisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+        
+        intent.filters.startDate = thisMonth.toISOString().split('T')[0];
+        intent.filters.endDate = today.toISOString().split('T')[0];
+      } else if (text.includes('last quarter') || text.includes('last 3 months')) {
+        const today = new Date();
+        const threeMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 3, 1);
+        
+        intent.filters.startDate = threeMonthsAgo.toISOString().split('T')[0];
+        intent.filters.endDate = today.toISOString().split('T')[0];
+      } else if (text.includes('year to date') || text.includes('ytd')) {
+        const today = new Date();
+        const yearStart = new Date(today.getFullYear(), 0, 1);
+        
+        intent.filters.startDate = yearStart.toISOString().split('T')[0];
+        intent.filters.endDate = today.toISOString().split('T')[0];
+      } else {
+        // Default to current year if no specific time period mentioned
+        const today = new Date();
+        const currentYear = today.getFullYear();
+        intent.filters.startDate = `${currentYear}-01-01`;
+        intent.filters.endDate = today.toISOString().split('T')[0];
+      }
+    }
+    
+    // Extract destination sheet if not already set
+    if (!intent.destination) {
+      // Standard detection of sheet name after "into" or "to"
+      const sheetMatch = text.match(/(?:to|in|into)\s+(?:sheet|tab)?\s*([a-zA-Z0-9]+)/i);
+      if (sheetMatch && sheetMatch[1]) {
+        intent.destination = sheetMatch[1];
+      }
+    }
+  } 
+  else if (text.includes('create') || text.includes('new') || text.includes('add')) {
+    intent.type = 'create';
+    
+    if (text.includes('sheet') || text.includes('tab')) {
+      intent.action = 'createSheet';
+      
+      // Direct pattern match for "create a new sheet named X"
+      const directNameMatch = text.match(/(?:create|add|make)(?:\s+a)?\s+(?:new)?\s+(?:sheet|tab)\s+(?:named|called)\s+([a-zA-Z0-9_]+)/i);
+      if (directNameMatch && directNameMatch[1]) {
+        intent.parameters.name = directNameMatch[1];
+        console.log('Direct match for sheet name: ' + intent.parameters.name);
+        
+        // Check for emoji filling in the same request
+        if (text.includes('fill') && text.includes('emoji')) {
+          const emojiTypeMatch = text.match(/fill.*with\s+([a-zA-Z0-9_]+)\s+emoji/i);
+          if (emojiTypeMatch && emojiTypeMatch[1]) {
+            intent.parameters.fillWith = emojiTypeMatch[1] + ' emoji';
+            console.log('Will fill sheet with: ' + intent.parameters.fillWith);
+          } else {
+            // Default to poop emoji if just "emoji" was mentioned
+            intent.parameters.fillWith = 'poop emoji';
+            console.log('Will fill sheet with default poop emoji');
+          }
+        }
+        
+        return intent; // Return immediately when we have a direct match
+      }
+      
+      // Check for sheet name with quotes
+      const nameMatch = text.match(/(?:named|called)\s+["']([^"']+)["']/i);
+      if (nameMatch && nameMatch[1]) {
+        intent.parameters.name = nameMatch[1];
+      } 
+      // Also check for sheet name without quotes
+      else {
+        // Try to extract name after "named" or "called" without quotes
+        const noQuotesMatch = text.match(/(?:named|called)\s+([a-zA-Z0-9_]+)/i);
+        if (noQuotesMatch && noQuotesMatch[1]) {
+          intent.parameters.name = noQuotesMatch[1];
+          console.log('Found sheet name without quotes: ' + noQuotesMatch[1]);
+        }
+        // Also check for "new sheet named X" pattern
+        else if (text.includes('new sheet named') || text.includes('new tab named')) {
+          const newSheetMatch = text.match(/new (?:sheet|tab) named\s+([a-zA-Z0-9_]+)/i);
+          if (newSheetMatch && newSheetMatch[1]) {
+            intent.parameters.name = newSheetMatch[1];
+            console.log('Found sheet name in new sheet pattern: ' + newSheetMatch[1]);
+          }
+        }
+      }
+      
+      // Special case for "fill with emojis" - extract the emoji type
+      if (text.includes('fill') && text.includes('emoji')) {
+        const emojiTypeMatch = text.match(/fill.*with\s+([a-zA-Z0-9_]+)\s+emoji/i);
+        if (emojiTypeMatch && emojiTypeMatch[1]) {
+          intent.parameters.fillWith = emojiTypeMatch[1] + ' emoji';
+          console.log('Will fill sheet with: ' + intent.parameters.fillWith);
+        }
+      }
+    }
+  }
+  
+  return intent;
+}
+
+/**
+ * Executes the interpreted intent by calling the appropriate API functions.
+ * 
+ * @param {Object} intent - The interpreted intent object
+ * @return {Object} The response object
+ */
+function executeIntent(intent) {
+  // Log the intent we're executing
+  console.log('Executing intent: ' + JSON.stringify(intent));
+  
+  // If the intent type is unknown, return a help message
+  if (intent.type === 'unknown') {
+    return {
+      type: 'text',
+      message: "I'm not sure what you're asking for. " + generateHelpResponse()
+    };
+  }
+  
+  // Fix for sheet creation requests mislabeled as fetch
+  if (intent.type === 'fetch' && intent.action === 'createSheet') {
+    console.log('Correcting intent type from fetch to create for sheet creation');
+    intent.type = 'create';
+  }
+  
+  // Handle special case for P&L with sheet creation
+  if (intent.type === 'fetch' && intent.action === 'report' && intent.entity === 'ProfitAndLoss' && intent.parameters.createSheet) {
+    console.log('Processing special case: Create sheet then fetch P&L');
+    
+    // First create the sheet
+    const sheetResult = createNewSheet({
+      type: 'create',
+      action: 'createSheet',
+      parameters: { name: intent.destination || intent.parameters.name }
+    });
+    
+    console.log('Sheet creation result: ' + JSON.stringify(sheetResult));
+    
+    // Then continue with the P&L fetch
+    return fetchReport(intent);
+  }
+  
+  // Handle different intent types
+  switch (intent.type) {
+    case 'fetch':
+      // Process different fetch subtypes (reports, entities, etc.)
+      if (intent.action === 'report') {
+        return fetchReport(intent);
+      } else if (intent.action === 'query' || intent.action === 'entity') {
+        return fetchEntityData(intent);
+      } else if (intent.action === 'cell') {
+        return getCellValue(intent.parameters.cellReference);
+      }
+      break;
+      
+    case 'create':
+      // Process creation actions
+      if (intent.action === 'createSheet') {
+        return createNewSheet(intent);
+      }
+      break;
+      
+    case 'modify':
+      // Process sheet modification actions
+      return modifySheet(intent);
+      
+    case 'help':
+      // Return help information
+      return {
+        type: 'text',
+        message: generateHelpResponse()
+      };
+      
+    case 'diagnostic':
+      // Run diagnostic tools
+      return runQuickBooksDiagnostic();
+      
+    case 'custom':
+      // Handle custom API calls specified directly in the intent
+      return executeCustomApiCall(intent);
+  }
+  
+  // If we got here, we didn't handle the intent properly
+  return {
+    type: 'text',
+    message: "I understood your request, but I'm not sure how to execute it yet. " + 
+             "I'm interpreting it as: " + JSON.stringify(intent)
+  };
+}
+
+/**
+ * Executes a custom API call based on the specified intent details.
+ * This is used when the intent contains specific API instructions.
+ * 
+ * @param {Object} intent - The intent with custom API call details
+ * @return {Object} The response from the API call
+ */
+function executeCustomApiCall(intent) {
+  try {
+    let result = { type: 'text', message: 'Custom API call executed.' };
+    
+    // Execute QuickBooks API call if specified
+    if (intent.qboApiCall) {
+      console.log('Executing custom QBO API call: ' + intent.qboApiCall);
+      
+      // Extract API endpoint and parameters
+      const endpoint = intent.qboApiCall;
+      const method = intent.qboMethod || 'GET';
+      const data = intent.qboData || null;
+      
+      // Call the QuickBooks API
+      const qboResponse = callQuickBooksApi(endpoint, method, data);
+      
+      // Set the result
+      result.qboResponse = qboResponse;
+      result.message = 'Successfully retrieved data from QuickBooks.';
+    }
+    
+    // Execute Google Sheets API action if specified
+    if (intent.sheetsApiCall) {
+      console.log('Executing custom Google Sheets API action: ' + intent.sheetsApiCall);
+      
+      // Parse the Sheets API action
+      const [action, ...params] = intent.sheetsApiCall.split('.');
+      
+      // Execute the appropriate Sheets API action
+      let sheetsResult = null;
+      
+      switch (action) {
+        case 'createSheet':
+          sheetsResult = createSheet(intent.parameters.name || 'New Sheet', intent.parameters);
+          break;
+          
+        case 'updateRange':
+          sheetsResult = updateSheetRange(
+            intent.parameters.range, 
+            intent.parameters.data, 
+            intent.parameters.sheetName
+          );
+          break;
+          
+        case 'formatRange':
+          sheetsResult = formatSheetRange(
+            intent.parameters.range, 
+            intent.parameters.format, 
+            intent.parameters.sheetName
+          );
+          break;
+          
+        case 'clearRange':
+          sheetsResult = clearSheetRange(
+            intent.parameters.range, 
+            intent.parameters.sheetName
+          );
+          break;
+          
+        default:
+          throw new Error('Unsupported Sheets API action: ' + action);
+      }
+      
+      // Set the result
+      result.sheetsResult = sheetsResult;
+      result.message = 'Successfully executed Google Sheets action.';
+    }
+    
+    // Process combined QBO and Sheets actions
+    if (intent.qboApiCall && intent.sheetsApiCall && intent.destination) {
+      // If we have both API calls and a destination, write the QBO data to the sheet
+      const destinationRange = intent.destination;
+      const qboData = result.qboResponse;
+      
+      // Format the data for the sheet if needed
+      const formattedData = intent.parameters.formatData ? 
+        formatDataForSheet(qboData, intent.parameters.formatOptions) : 
+        qboData;
+      
+      // Write to the sheet
+      const writeResult = writeDataToRange(destinationRange, formattedData);
+      
+      result.writeResult = writeResult;
+      result.message = 'Successfully retrieved QuickBooks data and wrote it to ' + destinationRange;
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('Error executing custom API call: ' + error.toString());
+    return {
+      type: 'error',
+      message: 'Failed to execute custom API call: ' + error.message
+    };
+  }
+}
+
+/**
+ * Helper function to modify a sheet based on the specified intent.
+ * 
+ * @param {Object} intent - The sheet modification intent
+ * @return {Object} The result of the modification
+ */
+function modifySheet(intent) {
+  try {
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const action = intent.action;
+    
+    switch (action) {
+      case 'addRow':
+        const sheet = intent.parameters.sheetName ? 
+          spreadsheet.getSheetByName(intent.parameters.sheetName) : 
+          spreadsheet.getActiveSheet();
+          
+        if (!sheet) {
+          throw new Error('Sheet not found: ' + intent.parameters.sheetName);
+        }
+        
+        // Add row data
+        const rowData = intent.parameters.rowData || [];
+        const lastRow = sheet.getLastRow();
+        
+        if (rowData.length > 0) {
+          sheet.getRange(lastRow + 1, 1, 1, rowData.length).setValues([rowData]);
+        } else {
+          sheet.insertRowAfter(lastRow);
+        }
+        
+        return {
+          type: 'text',
+          message: 'Added a new row to ' + sheet.getName()
+        };
+        
+      case 'formatRange':
+        // Format a range with specified formatting
+        const sheetToFormat = intent.parameters.sheetName ? 
+          spreadsheet.getSheetByName(intent.parameters.sheetName) : 
+          spreadsheet.getActiveSheet();
+          
+        if (!sheetToFormat) {
+          throw new Error('Sheet not found: ' + intent.parameters.sheetName);
+        }
+        
+        let rangeToFormat = intent.parameters.range;
+        const formatToApply = intent.parameters.format || {};
+        
+        // Handle 'last' row special case
+        if (rangeToFormat === 'last') {
+          const lastRowNum = sheetToFormat.getLastRow();
+          rangeToFormat = lastRowNum + ':' + lastRowNum;
+        }
+        
+        // Format the range using the formatSheetRange utility function
+        const formatResult = formatSheetRange(rangeToFormat, formatToApply, sheetToFormat.getName());
+        
+        // Describe what was formatted
+        let rangeName = rangeToFormat;
+        if (rangeToFormat.includes(':')) {
+          if (rangeToFormat.match(/^\d+:\d+$/)) {
+            rangeName = 'row ' + rangeToFormat.split(':')[0];
+          } else if (rangeToFormat.match(/^[A-Z]+:[A-Z]+$/)) {
+            rangeName = 'column ' + rangeToFormat.split(':')[0];
+          } else {
+            rangeName = 'range ' + rangeToFormat;
+          }
+        } else {
+          rangeName = 'cell ' + rangeToFormat;
+        }
+        
+        // Describe what formatting was applied
+        let formatDescription = '';
+        if (formatToApply.backgroundColor) {
+          formatDescription = ' with ' + formatToApply.backgroundColor + ' background color';
+        } else if (formatToApply.fontColor) {
+          formatDescription = ' with ' + formatToApply.fontColor + ' text color';
+        } else if (formatToApply.fontWeight === 'bold') {
+          formatDescription = ' as bold';
+        }
+        
+        return {
+          type: 'text',
+          message: 'Formatted ' + rangeName + formatDescription + ' in sheet "' + sheetToFormat.getName() + '"'
+        };
+        
+      case 'clearRange':
+        const rangeToClear = intent.parameters.range;
+        const sheetToClear = intent.parameters.sheetName ? 
+          spreadsheet.getSheetByName(intent.parameters.sheetName) : 
+          spreadsheet.getActiveSheet();
+          
+        if (!sheetToClear) {
+          throw new Error('Sheet not found: ' + intent.parameters.sheetName);
+        }
+        
+        // Clear the range
+        const range = rangeToClear ? 
+          sheetToClear.getRange(rangeToClear) : 
+          sheetToClear.getDataRange();
+          
+        range.clear();
+        
+        return {
+          type: 'text',
+          message: 'Cleared range ' + rangeToClear + ' in ' + sheetToClear.getName()
+        };
+
+      case 'updateRange':
+        // Get the sheet
+        const sheetToUpdate = intent.parameters.sheetName ? 
+          spreadsheet.getSheetByName(intent.parameters.sheetName) : 
+          spreadsheet.getActiveSheet();
+          
+        if (!sheetToUpdate) {
+          throw new Error('Sheet not found: ' + intent.parameters.sheetName);
+        }
+        
+        // Check if we're changing emojis
+        if (intent.text && (intent.text.toLowerCase().includes('emoji') || 
+                           intent.text.toLowerCase().includes('cat') ||
+                           intent.text.toLowerCase().includes('poop') ||
+                           intent.text.toLowerCase().includes('heart') ||
+                           intent.text.toLowerCase().includes('smile') ||
+                           intent.text.toLowerCase().includes('star'))) {
+          
+          // Determine which emoji to use
+          let emojiType = 'cat emoji'; // Default to cat if changing emojis
+          
+          if (intent.text.toLowerCase().includes('cat')) {
+            emojiType = 'cat emoji';
+          } else if (intent.text.toLowerCase().includes('heart')) {
+            emojiType = 'heart emoji';
+          } else if (intent.text.toLowerCase().includes('smile')) {
+            emojiType = 'smile emoji';
+          } else if (intent.text.toLowerCase().includes('star')) {
+            emojiType = 'star emoji';
+          } else if (intent.text.toLowerCase().includes('poop')) {
+            emojiType = 'poop emoji';
+          }
+          
+          // Fill the sheet with the new emoji
+          fillSheetWithContent(sheetToUpdate, emojiType);
+          
+          return {
+            type: 'text',
+            message: 'Updated sheet "' + sheetToUpdate.getName() + '" with ' + emojiType
+          };
+        }
+        
+        // Handle normal range updates with data
+        const rangeToUpdate = intent.parameters.range;
+        const dataToUpdate = intent.parameters.data;
+        
+        if (!rangeToUpdate) {
+          throw new Error('Range not specified for update');
+        }
+        
+        if (!dataToUpdate) {
+          throw new Error('No data provided for update');
+        }
+        
+        // Use the updateSheetRange utility function
+        const result = updateSheetRange(rangeToUpdate, dataToUpdate, sheetToUpdate.getName());
+        
+        if (!result.success) {
+          throw new Error(result.message);
+        }
+        
+        return {
+          type: 'text',
+          message: result.message
+        };
+        
+      // Add more modification actions as needed
+      
+      default:
+        throw new Error('Unsupported modification action: ' + action);
+    }
+  } catch (error) {
+    console.error('Error modifying sheet: ' + error.toString());
+    return {
+      type: 'error',
+      message: 'Failed to modify sheet: ' + error.message
+    };
+  }
+}
+
+/**
+ * Gets the value of a specific cell.
+ * 
+ * @param {string} cellReference - The cell reference (e.g., "A1", "B2")
+ * @return {Object} The cell value response
+ */
+function getCellValue(cellReference) {
+  try {
+    const sheet = SpreadsheetApp.getActiveSheet();
+    const range = sheet.getRange(cellReference);
+    const value = range.getValue();
+    const sheetName = sheet.getName();
+    
+    return {
+      type: 'text',
+      message: `Cell ${cellReference} in sheet "${sheetName}" contains: ${value}`
+    };
+  } catch (error) {
+    return {
+      type: 'error',
+      message: `I couldn't find the value in cell ${cellReference}. Error: ${error.message}`
+    };
+  }
+
+/**
+ * Generates a help response.
+ * 
+ * @return {Object} The help information
+ */
+function generateHelpResponse() {
+  return {
+    type: 'help',
+    message: "I can help you get data from QuickBooks and manage your spreadsheets. Try these commands:",
+    examples: [
+      "Fetch profit and loss report for last month",
+      "Get invoices from last quarter into Sheet1",
+      "Show me all bills this year",
+      "Show me all customers",
+      "Fetch balance sheet year to date",
+      "Get expenses for this month",
+      "What's in cell A1?",
+      "Show me the value of B15",
+      "Run QuickBooks diagnostic"
+    ]
+  };
+}
+
+/**
+ * Fetches a report from QuickBooks based on intent.
+ * 
+ * @param {Object} intent - The intent with report details
+ * @return {Object} The formatted report data
+ */
+function fetchReport(intent) {
+  try {
+    // Prepare report parameters
+    const params = {};
+    
+    if (intent.filters.startDate && intent.filters.endDate) {
+      params.start_date = intent.filters.startDate;
+      params.end_date = intent.filters.endDate;
+    } else {
+      // Check if the request is for a specific year with more flexible year detection
+      const yearPattern = /\b(20\d\d)\b|for\s+(20\d\d)\b|in\s+(20\d\d)\b/i;
+      const yearMatch = intent.text ? intent.text.match(yearPattern) : null;
+      
+      // Extract the year from whichever group matched
+      const year = yearMatch ? 
+                  (yearMatch[1] || yearMatch[2] || yearMatch[3]) : 
+                  new Date().getFullYear().toString();
+      
+      // Set the date range for the whole year
+      params.start_date = year + '-01-01';
+      params.end_date = year + '-12-31';
+      
+      // Log the determined date range
+      logAction('Date Range', 'Year detection', 'Setting date range for year: ' + year);
+    }
+    
+    // Handle P&L with monthly columns based on query content or context
+    if (intent.entity === 'ProfitAndLoss') {
+      // Enable monthly columns based on query intent and context
+      const shouldUseMonthlyColumns = intent.text && (
+          intent.text.includes('by month') || 
+          intent.text.includes('monthly') || 
+          intent.text.includes('columns') || 
+          intent.text.includes('full year') ||
+          /for\s+20\d\d/i.test(intent.text) ||
+          intent.text.includes('year to date')
+      );
+      
+      if (shouldUseMonthlyColumns) {
+        params.columns = 'monthly';
+        intent.parameters.columns = 'monthly';
+        logAction('Report Format', 'Using monthly columns', 'Based on user query');
+      }
+    }
+    
+    // Log what we're about to do
+    logAction('Fetching Report', intent.entity, JSON.stringify(params));
+    
+    // Get report data from QuickBooks - this may throw an error
+    const reportData = getReport(intent.entity, params);
+    
+    // Log the raw report data for debugging
+    console.log('Raw report data headers: ' + (reportData ? JSON.stringify(reportData.Header) : 'No headers'));
+    console.log('Raw report data has rows: ' + (reportData && reportData.Rows ? 'Yes, count: ' + (reportData.Rows.Row ? reportData.Rows.Row.length : 0) : 'No'));
+    
+    // Detailed logging about the data we received
+    console.log('Report data type: ' + typeof reportData);
+    console.log('Report data keys: ' + (reportData ? Object.keys(reportData).join(', ') : 'None'));
+    
+    // Check if we got an error object instead of report data
+    if (reportData && reportData.type === 'SystemFault') {
+      console.error('QuickBooks API returned a SystemFault: ' + JSON.stringify(reportData));
+      return {
+        type: 'error',
+        message: `Failed to retrieve ${intent.entity} report: ${reportData.message || 'Unknown QuickBooks error'}`,
+        details: reportData
+      };
+    }
+    
+    // Check if the report has any data
+    if (!reportData || !reportData.Rows || !reportData.Rows.Row || reportData.Rows.Row.length === 0) {
+      return {
+        type: 'warning',
+        message: `No data found for ${intent.entity} report in the specified date range (${params.start_date} to ${params.end_date}). The sheet has been created but is empty.`,
+        data: {
+          rowCount: 0,
+          sheetName: intent.destination || (intent.entity + ' ' + params.start_date.substring(0, 4))
+        }
+      };
+    }
+    
+    // Check which kind of P&L response we got
+    let reportType = 'standard';
+    if (intent.entity === 'ProfitAndLoss') {
+      if (reportData.Header && reportData.Header.ReportName === 'Profit and Loss (Basic)') {
+        reportType = 'minimal';
+        logAction('P&L Format', 'Using minimal transaction-based P&L', 'Basic P&L data');
+      } else if (reportData.Header && 
+                 reportData.Header.ReportName === 'Profit and Loss (Direct)') {
+        reportType = 'direct';
+        logAction('P&L Format', 'Using direct simplified P&L', 'Direct P&L data');
+      } else if (reportData.Header && 
+                 reportData.Header.ReportName === 'P&L Skeleton (API Access Limited)') {
+        reportType = 'skeleton';
+        logAction('P&L Format', 'Using skeleton P&L template', 'Template only');
+      } else if (reportData.Rows && reportData.Rows.Row && 
+                !reportData.Rows.Row.some(row => {
+                  return row.type === 'Data' && 
+                         row.ColData && 
+                         row.ColData.length > 2;
+                })) {
+        reportType = 'alternative';
+        logAction('P&L Format', 'Using alternative format response', 'Simplified P&L data');
+      }
+    }
+    
+    // Format data for Google Sheets
+    const formattedData = formatDataForSheet(reportData, 'report');
+    
+    // Log the formatted data dimensions
+    console.log('Formatted data dimensions: ' + formattedData.length + ' rows by ' + 
+                (formattedData.length > 0 ? formattedData[0].length : 0) + ' columns');
+    
+    // Check if formatted data is empty (just headers)
+    if (formattedData.length <= 1) {
+      return {
+        type: 'warning',
+        message: `The ${intent.entity} report was retrieved but contains no data rows for the period ${params.start_date} to ${params.end_date}. The sheet has been created with only headers.`,
+        data: {
+          rowCount: 0,
+          sheetName: intent.destination || (intent.entity + ' ' + params.start_date.substring(0, 4))
+        }
+      };
+    }
+    
+    // Define destination sheet - create a more descriptive name if needed
+    let sheetName = '';
+    
+    // First check if a destination was explicitly provided in the intent
+    if (intent.destination && intent.destination.trim()) {
+      console.log('Using explicitly provided sheet name: ' + intent.destination);
+      sheetName = intent.destination.trim();
+    } 
+    // Check if there's a specific tab name requested in the original text
+    else if (intent.text) {
+      // Try various patterns for sheet name extraction
+      const sheetNamePatterns = [
+        /(?:in|into|to)?\s+(?:a\s+)?new\s+tab\s+(?:named|called)\s+['"]?([^'"]+?)['"]?(?:\s|$|\.|,)/i,  // new tab named X
+        /tab\s+(?:named|called)\s+['"]?([^'"]+?)['"]?(?:\s|$|\.|,)/i,  // tab named X
+        /sheet\s+(?:named|called)\s+['"]?([^'"]+?)['"]?(?:\s|$|\.|,)/i, // sheet named X
+        /to\s+['"]?([^'"]+?)['"]?(?:\s|$|\.|,)/i  // to X
+      ];
+      
+      // Try each pattern in order
+      let matched = false;
+      for (const pattern of sheetNamePatterns) {
+        const match = intent.text.match(pattern);
+        if (match && match[1]) {
+          sheetName = match[1].trim();
+          console.log('Extracted sheet name using pattern: ' + pattern + ' -> ' + sheetName);
+          matched = true;
+          break;
+        }
+      }
+      
+      // If no patterns matched but we see quotes, try to extract text between quotes
+      if (!matched && intent.text.includes('"') || intent.text.includes("'")) {
+        const quotePattern = /["']([^"']+)["']/;
+        const quoteMatch = intent.text.match(quotePattern);
+        if (quoteMatch && quoteMatch[1]) {
+          sheetName = quoteMatch[1].trim();
+          console.log('Extracted sheet name from quotes: ' + sheetName);
+        }
+      }
+    }
+    
+    // If no specific name found yet, create a descriptive name based on the report type
+    if (!sheetName) {
+      if (intent.entity === 'ProfitAndLoss') {
+        const year = params.start_date.substring(0, 4);
+        sheetName = `P&L ${year}`;
+        
+        // Add monthly to the name if it's a monthly report
+        if (params.columns === 'monthly') {
+          sheetName += ' Monthly';
+        }
+        
+        // Add note if it's not the standard format
+        if (reportType !== 'standard') {
+          const formatSuffix = {
+            'alternative': ' (Basic)',
+            'minimal': ' (Simple)',
+            'direct': ' (Direct)',
+            'skeleton': ' (Template)'
+          };
+          sheetName += formatSuffix[reportType] || '';
+        }
+      } else {
+        // For other report types
+        const year = params.start_date.substring(0, 4);
+        sheetName = `${intent.entity} ${year}`;
+      }
+    }
+    
+    console.log('Final sheet name decided: ' + sheetName);
+    
+    // Make sure P&L sheet name matches year in query if specified
+    if (intent.entity === 'ProfitAndLoss' && intent.text) {
+      const yearInQuery = intent.text.match(/\b(20\d\d)\b/);
+      const yearInSheet = sheetName.match(/\b(20\d\d)\b/);
+      
+      // If years don't match, update sheet name to include the correct year
+      if (yearInQuery && yearInSheet && yearInQuery[1] !== yearInSheet[1]) {
+        sheetName = sheetName.replace(yearInSheet[1], yearInQuery[1]);
+        logAction('Sheet Naming', 'Adjusted year in sheet name', 
+                 'Changed to match year in query: ' + yearInQuery[1]);
+      }
+    }
+    
+    // Write data to sheet with debugging
+    console.log('Writing to sheet: ' + sheetName + ' with ' + formattedData.length + ' rows of data');
+    const writeResult = writeToSheet(sheetName, formattedData, true);
+    console.log('Write result: ' + JSON.stringify(writeResult));
+    
+    // After writing data, try to activate the sheet to make it visible to the user
+    try {
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      const sheet = ss.getSheetByName(sheetName);
+      if (sheet) {
+        console.log('Activating sheet: ' + sheetName);
+        sheet.activate();
+      } else {
+        console.warn('Could not activate sheet after writing: sheet not found');
+      }
+    } catch (activateError) {
+      console.warn('Non-critical error activating sheet: ' + activateError.toString());
+      // Continue anyway, this is just for user convenience
+    }
+    
+    if (writeResult.success) {
+      let message = `${intent.entity} report fetched and written to sheet "${sheetName}" with ${formattedData.length - 1} rows of data.`;
+      
+      // Add a note based on which format was used
+      if (reportType !== 'standard' && intent.entity === 'ProfitAndLoss') {
+        const formatNotes = {
+          'alternative': ' (Note: Used simplified format due to QuickBooks permissions. For full P&L with monthly columns, ensure your QuickBooks user has Admin or Reports access.)',
+          'minimal': ' (Note: Created a basic P&L using transaction data due to limited QuickBooks permissions. This is an approximate summary only.)',
+          'direct': ' (Note: Created a P&L template with limited data due to QuickBooks API restrictions. Please check your QuickBooks settings or try reconnecting.)',
+          'skeleton': ' (Note: Created a P&L template with limited data due to QuickBooks API restrictions. Please check your QuickBooks settings or try reconnecting.)'
+        };
+        message += formatNotes[reportType] || '';
+      }
+      
+      // If month columns were requested, add a note about that
+      if (intent.entity === 'ProfitAndLoss' && params.columns === 'monthly') {
+        message += ` The report includes monthly columns as requested.`;
+      }
+      
+      return {
+        type: 'success',
+        message: message,
+        data: {
+          rows: writeResult.rowCount,
+          sheetName: sheetName
+        }
+      };
+    } else {
+      throw new Error(writeResult.message);
+    }
+  } catch (error) {
+    // Pass through permission errors directly
+    if (error.message && error.message.includes('QuickBooks permission error')) {
+      return {
+        type: 'error',
+        message: error.message + "\n\nAlternative: You can also try to reconnect to QuickBooks by clicking the settings icon and disconnecting/reconnecting with an Admin account."
+      };
+    }
+    
+    // Handle other P&L errors specifically
+    if (intent.entity === 'ProfitAndLoss' && error.message.includes('API error')) {
+      return {
+        type: 'error',
+        message: 'There was an issue fetching the Profit and Loss report. This may be due to limited permissions in QuickBooks. Please make sure your QuickBooks user has rights to access financial reports, or try with a simpler query like "Show me expenses for this month".'
+      };
+    }
+    
+    // Generic error handling
+    return {
+      type: 'error',
+      message: 'Error executing action: ' + error.message
+    };
+  }
+}
+
+/**
+ * Fetches entity data from QuickBooks based on intent.
+ * 
+ * @param {Object} intent - The intent with entity details
+ * @return {Object} The formatted entity data
+ */
+function fetchEntityData(intent) {
+  try {
+    // Check if we need to create a sheet first (for combined operations)
+    if (intent.parameters.createSheet && intent.parameters.name) {
+      console.log('Creating new sheet before fetching entity data');
+      const sheetName = intent.parameters.name;
+      const sheet = getOrCreateSheet(sheetName);
+      console.log('Sheet created: ' + sheetName);
+      
+      // The destination for the query data will be this new sheet
+      intent.destination = sheetName;
+    }
+    
+    // Build query
+    let query = `SELECT * FROM ${intent.entity}`;
+    
+    // Add date filters if applicable
+    if (intent.filters.startDate && intent.filters.endDate) {
+      if (intent.entity === 'Invoice' || intent.entity === 'Bill' || intent.entity === 'Purchase') {
+        query += ` WHERE TxnDate >= '${intent.filters.startDate}' AND TxnDate <= '${intent.filters.endDate}'`;
+      }
+    }
+    
+    console.log('Executing QuickBooks query: ' + query);
+    
+    // Execute query
+    const queryData = queryQuickBooks(query);
+    
+    // Log what we received
+    console.log('Received query data. Number of records: ' + 
+               (queryData && queryData.QueryResponse ? 
+                Object.keys(queryData.QueryResponse).length : 'No data'));
+    
+    // Format data for Google Sheets
+    const formattedData = formatDataForSheet(queryData, 'query');
+    
+    // Define destination sheet
+    const sheetName = intent.destination || intent.entity;
+    
+    // Write data to sheet
+    const writeResult = writeToSheet(sheetName, formattedData);
+    
+    if (writeResult.success) {
+      return {
+        type: 'success',
+        message: `${intent.entity} data fetched and written to sheet "${sheetName}"`,
+        data: {
+          rows: writeResult.rowCount,
+          sheetName: sheetName
+        }
+      };
+    } else {
+      throw new Error(writeResult.message);
+    }
+  } catch (error) {
+    console.error('Error in fetchEntityData: ' + error.toString());
+    return {
+      type: 'error',
+      message: `Failed to fetch ${intent.entity} data: ${error.message}`
+    };
+  }
+
+/**
+ * Creates a new sheet.
+ * 
+ * @param {Object} intent - The intent with sheet details
+ * @return {Object} The result of sheet creation
+ */
+function createNewSheet(intent) {
+  if (!intent.parameters.name) {
+    return {
+      type: 'error',
+      message: 'Please specify a name for the new sheet.'
+    };
+  }
+  
+  try {
+    console.log('Creating new sheet with parameters: ' + JSON.stringify(intent.parameters));
+    
+    // Remove any quotes from the sheet name if present
+    const sheetName = intent.parameters.name.replace(/^["']|["']$/g, '');
+    
+    const sheet = getOrCreateSheet(sheetName);
+    
+    // If this was a P&L request with a sheet name, handle it as a fetch report too
+    if (intent.type === 'fetch' && intent.action === 'report' && intent.entity === 'ProfitAndLoss') {
+      // Redirect to the fetch report function with the intent
+      return fetchReport(intent);
+    }
+    
+    // Check if we need to fill the sheet with emojis
+    const originalQuery = intent.text ? intent.text.toLowerCase() : '';
+    const shouldFillWithEmojis = intent.parameters.fillWith && intent.parameters.fillWith.includes('emoji') || 
+                                originalQuery.includes('fill') && originalQuery.includes('emoji');
+    
+    if (shouldFillWithEmojis) {
+      console.log('Filling sheet with emojis based on: ' + (intent.parameters.fillWith || originalQuery));
+      
+      // Determine which emoji to use with improved detection
+      let emoji = '💩'; // Default to poop emoji
+      let emojiType = 'poop emojis';
+      
+      if (intent.parameters.fillWith) {
+        if (intent.parameters.fillWith.includes('cat')) {
+          emoji = '🐱';
+          emojiType = 'cat emojis';
+        } else if (intent.parameters.fillWith.includes('heart')) {
+          emoji = '❤️';
+          emojiType = 'heart emojis';
+        } else if (intent.parameters.fillWith.includes('star')) {
+          emoji = '⭐';
+          emojiType = 'star emojis';
+        } else if (intent.parameters.fillWith.includes('smile')) {
+          emoji = '😊';
+          emojiType = 'smile emojis';
+        } else if (intent.parameters.fillWith.includes('fire')) {
+          emoji = '🔥';
+          emojiType = 'fire emojis';
+        }
+      } else if (originalQuery) {
+        // Try to extract emoji type from original query with improved detection
+        if (originalQuery.includes('cat')) {
+          emoji = '🐱';
+          emojiType = 'cat emojis';
+        } else if (originalQuery.includes('heart')) {
+          emoji = '❤️';
+          emojiType = 'heart emojis';
+        } else if (originalQuery.includes('star')) {
+          emoji = '⭐';
+          emojiType = 'star emojis';
+        } else if (originalQuery.includes('smile')) {
+          emoji = '😊';
+          emojiType = 'smile emojis';
+        } else if (originalQuery.includes('fire')) {
+          emoji = '🔥';
+          emojiType = 'fire emojis';
+        }
+      }
+      
+      // Fill a 10x10 grid with the emoji
+      const range = sheet.getRange(1, 1, 10, 10);
+      const values = Array(10).fill().map(() => Array(10).fill(emoji));
+      range.setValues(values);
+      
+      return {
+        type: 'success',
+        message: `Created new sheet named "${sheetName}" and filled it with ${emojiType}`,
+        data: {
+          sheetName: sheetName
+        }
+      };
+    }
+    
+    return {
+      type: 'success',
+      message: `Created new sheet named "${sheetName}"`,
+      data: {
+        sheetName: sheetName
+      }
+    };
+  } catch (error) {
+    throw new Error('Failed to create sheet: ' + error.message);
+  }
+}
+
+/**
+ * Runs a diagnostic test on the QuickBooks connection.
+ * 
+ * @return {Object} Formatted diagnostic results
+ */
+function runQuickBooksDiagnostic() {
+  try {
+    // Call the diagnostic function
+    const diagnosticResults = runQBDiagnostic();
+    
+    return {
+      type: 'diagnostic',
+      message: diagnosticResults.message,
+      success: diagnosticResults.success
+    };
+  } catch (error) {
+    return {
+      type: 'error',
+      message: 'Error running diagnostics: ' + error.message
+    };
+  }
+} 
